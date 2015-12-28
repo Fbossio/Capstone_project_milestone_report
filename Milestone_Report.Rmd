@@ -1,0 +1,291 @@
+---
+title: "Data Science Capstone - Milestone Report"
+author: "Felix Bossio"
+date: December, 2015
+output: html_document
+---
+
+# Introduction
+
+This milestone report is part of the Johns Hopkins - Coursera Data Science Specialization Capstone project. The purpose of the project is to build a Shiny application with a text predictive algorithm which must be able to predict the next word a user might type.
+
+In this milestone report we show the exploratory analysis we have performed on the data sets we have used, and summarize our plans for building the predictive model and the Shiny app.
+
+# The Data
+
+```{r linraries, message=FALSE, echo=FALSE}
+library(knitr)
+library(tm)
+library(SnowballC)
+library(RWeka)
+library(slam)
+library(ggplot2)
+library(wordcloud)
+library(Rgraphviz)
+```
+
+The data we are using to build the model consists in unestructured text in English language from three different sources; Blogs, News and Twitter. We downloaded the data from the Cursera web page, using the following URL:
+
+https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip
+
+```{r read datasets, cache=TRUE, echo=FALSE}
+con <- file("~/Escritorio/en_US/en_US.blogs.txt", "r")
+blogs <- readLines(con, encoding="UTF-8", skipNul = TRUE)
+close(con)
+rm(con)
+
+con <- file("~/Escritorio/en_US/en_US.news.txt", "r")
+news <- readLines(con, encoding="UTF-8", skipNul = TRUE)
+close(con)
+rm(con)
+
+con <- file("~/Escritorio/en_US/en_US.twitter.txt", "r")
+twitter <- readLines(con, encoding="UTF-8", skipNul = TRUE)
+close(con)
+rm(con)
+```
+
+After saving the data in a local directory, we start the analysis as it is shown in the following sections.
+
+# Summary statistics of the data sets
+
+In the table below we can see some properties of the data.
+
+
+```{r summary statistics, cache=TRUE, echo=FALSE}
+
+file <- c("blogs", "news", "twitter")
+
+## Number of lines
+nlines <- c(round(length(blogs)/(10^6),2), round(length(news)/(10^6), 2),
+            round(length(twitter)/(10^6), 2))
+
+
+## Number of characters
+chars <- c(round(sum(nchar(blogs))/(10^6), 2), round(sum(nchar(news))/(10^6), 2), 
+           round(sum(nchar(twitter)/(10^6),2)))
+
+Table <- data.frame("File" = file, "Millions of lines" = nlines, "Millions of characters"= chars)
+
+kable(Table)
+```
+
+
+We can see that the data sets contain between 1 million to 2.4 million of lines and between 160 to 200 million of characters. For the exploratory analysis we will use only a ramdom sample of 10% of the lines of each file, in order to avoid memory issues.
+
+```{r smaller_sample, echo=FALSE, cache=TRUE}
+## Using the binomial distribution to take a random sample of 10% from the original files
+set.seed(352)
+blogs.sample <- blogs[rbinom(length(blogs),1,0.1)==1]
+
+set.seed(2689)
+news.sample <- news[rbinom(length(blogs),1,0.1)==1]
+
+set.seed(125)
+twitter.sample <- twitter[rbinom(length(blogs),1,0.1)==1]
+```
+
+
+```{r save sample sets, echo=FALSE, cache=TRUE}
+## Saving the samples in a local directory
+
+con <- file("~/Escritorio/Samples/blogs.sample.txt", "w")
+writeLines(blogs.sample, con)
+close(con)
+rm(con)
+
+con <- file("~/Escritorio/Samples/news.sample.txt", "w")
+writeLines(news.sample, con)
+close(con)
+rm(con)
+
+con <- file("~/Escritorio/Samples/twitter.sample.txt", "w")
+writeLines(twitter.sample, con)
+close(con)
+rm(con)
+
+```
+
+```{r remove from memory, echo=FALSE}
+## Removing datasets from memory
+rm(blogs, news, twitter, blogs.sample, news.sample, twitter.sample)
+```
+
+The table below shows the summary statistics of the sample data sets we have obtained. It can be seen that their sizes are about a 10% of the original ones.
+
+```{r read sample datasets, cache=TRUE, echo=FALSE}
+con <- file("~/Escritorio/Samples/blogs.sample.txt", "r")
+blogs.sample <- readLines(con, encoding="UTF-8", skipNul = TRUE)
+close(con)
+rm(con)
+
+con <- file("~/Escritorio/Samples/news.sample.txt", "r")
+news.sample <- readLines(con, encoding="UTF-8", skipNul = TRUE)
+close(con)
+rm(con)
+
+con <- file("~/Escritorio/Samples/twitter.sample.txt", "r")
+twitter.sample <- readLines(con, encoding="UTF-8", skipNul = TRUE)
+close(con)
+rm(con)
+
+file <- c("blogs.sample", "news.sample", "twitter.sample")
+
+## Number of lines
+nlines <- c(round(length(blogs.sample)/(10^6),2), round(length(news.sample)/(10^6), 2), round(length(twitter.sample)/(10^6), 2))
+
+
+
+## Number of characters
+chars <- c(round(sum(nchar(blogs.sample))/(10^6), 2), round(sum(nchar(news.sample))/(10^6), 2), round(sum(nchar(twitter.sample)/(10^6),2)))
+
+Table2 <- data.frame("File" = file, "Millions of lines" = nlines, "Millions of characters"= chars)
+
+kable(Table2)
+```
+
+
+# Exploratory Analysis
+
+## Corpus creation and Tokenization
+
+In order to perform the exploratory analysis, we merged the individual files into one corpus of text. After this step we were able to perform the tokenization process, which consists in the remotion of symbols, punctuation, white spaces, stop words and numbers.
+
+
+```{r corpus, echo = FALSE, cache=TRUE}
+cname <- file.path("~", "Escritorio", "Samples")
+docs <- Corpus(DirSource(cname))
+
+## Repace symbols for empty spaces
+for(j in seq(docs))
+{
+  docs[[j]] <- gsub(":", " ", docs[[j]])
+  docs[[j]] <- gsub("\n", " ", docs[[j]])
+  docs[[j]] <- gsub("-", " ", docs[[j]])
+  docs[[j]] <- gsub("#", " ", docs[[j]])
+  docs[[j]] <- gsub("@", " ", docs[[j]])
+}
+```
+
+
+```{r tokenization, echo=FALSE, cache=TRUE}
+## Remove punctuation
+
+docs <- tm_map(docs, removePunctuation) 
+
+## Remove numbers
+docs <- tm_map(docs, removeNumbers)
+
+## Convert to lower case
+docs <- tm_map(docs, tolower) 
+
+## Remove stopwords
+docs <- tm_map(docs, removeWords, stopwords("english")) 
+
+## Steaming
+docs <- tm_map(docs, stemDocument)
+
+## Stripping unnecesary whitespace from documents
+docs <- tm_map(docs, stripWhitespace) 
+
+docs <- tm_map(docs, PlainTextDocument)
+
+```
+
+
+## Term-Document Matrix
+
+After tokenization, we create a Term-Document Matrix, which is an array that describes the frequency of terms that occure in our corpus. 
+
+```{r tdm, echo=FALSE, cache=TRUE}
+tdm <- TermDocumentMatrix(docs)
+```
+
+We have chosen to reduce the number of terms in our matrix by including only the ones with a frequency grater than 100. Below, it can be seen some terms included in our Term-Document Matrix
+
+
+```{r reducing the terms with less frequency, echo=FALSE}
+rowTotals <- row_sums(tdm)
+tdm <- tdm[which(rowTotals > 100),]
+```
+
+
+```{r tdm-summary, echo=FALSE}
+head(Terms(tdm))
+tail(Terms(tdm))
+```
+
+## Profanity filtering
+
+We do not want that our Term-Document Matrix contains swear words. So we filter them using a list of banned words downloaded from http://www.bannedwordlist.com/lists/swearWords.csv.
+
+```{r profanity, echo=FALSE, warning=FALSE}
+
+## Read the list of banned words
+con <- file("~/Escritorio/ProfanityWords/swearWords.csv", "r")
+profanity <- readLines(con)
+close(con)
+rm(con)
+
+## Remove the swear words from our TDM
+tdm <- tdm[setdiff(Terms(tdm),profanity),]
+```
+
+## Show word frequencies
+
+```{r frequencies, echo=FALSE}
+freq <- rowSums(as.matrix(tdm))
+ord <- order(freq)
+freq[head(ord)]
+freq[tail(ord)]
+```
+
+We can see above the most frequent and the less frequent words of our corpus. The less frequent words have a frequency of 101 because we remove the ones with a frequency lower than 100.
+
+## Plot of words frequencies
+
+We will show now some plots of the word frequencies of our TDM. The first plot is a histogram of the more frequent words. The plot shows the words with a frequency grater than 10000.
+
+```{r plot of word frequencies, echo=FALSE}
+wf <- data.frame(word=names(freq), freq=freq)
+p <- ggplot(subset(wf, freq>10000), aes(word, freq))    
+p <- p + geom_bar(stat="identity")   
+p <- p + theme(axis.text.x=element_text(angle=45, hjust=1))   
+p 
+```
+
+The next graphic is a wrod cloud of the most frequent words. It shows the words with a frequency grater than 8000.
+
+```{r word cloud, echo=FALSE}
+set.seed(142)   
+wordcloud(names(freq), freq, min.freq=8000, scale=c(5, .1), 
+          colors=brewer.pal(6, "Dark2"))   
+```
+
+
+## Visualization of term correlations
+
+The plot below shows the correlation among terms in our Term-Document Matrix. It shows terms with a frequency of at leas 14000 and with a correlation of at least 0.9.
+
+```{r plot term correlations, echo=FALSE}
+plot(tdm, terms = findFreqTerms(tdm, lowfreq = 14000), corThreshold = 0.9)
+```
+
+# Next Steps
+
+After finished the exploratory analysis summarised in this report, we will start to build the predictive model and deploy it as a Shiny app. To do that, we are planning to follow these steps:
+
+- Find 2-grams, 3-grams and 4-gram tokens.
+- Calculate frequencies of the above mentioned n-grams
+- Build a predictive model that uses these frequencies
+- Deploy the model as a Shiny App that is able to predict the next word.
+
+# Link to github repository
+
+To see the code used to generate this report, please follow this link:
+
+https://github.com/Fbossio/Capstone_project_milestone_report
+
+
+
+
